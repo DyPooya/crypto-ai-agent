@@ -165,9 +165,10 @@ Funding rate reveals where the crowd is positioned and adds two layers of insigh
   - Positive funding rate means LONG positions pay a fee every 8 hours (00:00, 08:00, 16:00 UTC). For short-duration trigger trades this is minor, but note it in the report so the trader is aware.
   - Negative funding rate means SHORT positions pay. Same logic.
 
-3. **Funding settlement window warning**:
-  - Determine the current UTC time. If a trigger order is likely to activate within **30 minutes before or after** a funding settlement (00:00, 08:00, 16:00 UTC), add a prominent warning: `⚠️ FUNDING WINDOW — trigger may activate near {HH}:00 UTC settlement. Expect increased volatility and possible wicks. Consider waiting until 30 min after settlement to place the trigger.`
-  - If the crowd is on the **same side** as your trade AND the trigger is near a funding window, this is a compounded risk — flag it as `⚠️ SQUEEZE + FUNDING WINDOW RISK`.
+3. **Funding settlement window warning** (expiry-aware rule):
+  - After computing the scenario's `Valid Until` timestamp, check whether the window from **now → Valid Until** overlaps any funding settlement (00:00, 08:00, 16:00 UTC). If yes, add: `⚠️ FUNDING WINDOW — settlement at {HH}:00 UTC falls within the trigger's validity window. Expect increased volatility and possible wicks around that time.`
+  - If the crowd is on the **same side** as your trade AND a funding settlement falls within the validity window, this is a compounded risk — flag it as `⚠️ SQUEEZE + FUNDING WINDOW RISK`.
+  - If no funding settlement falls within the validity window, no warning is needed.
 
 **Indicator alignment scoring** (used to determine overall confidence):
 - Count how many of the 4 indicators (CVD, OI, OB, Funding) align with the backtest direction
@@ -218,7 +219,17 @@ For each scenario, calculate the SL distance as a percentage of the trigger pric
 
 Each scenario must include expiry and invalidation conditions so triggers don't sit stale:
 
-- **Time validity**: Cancel the trigger if not activated within **16 candles of the execution timeframe** (16 × 15min = 4 hours by default). Output the exact UTC expiry time.
+- **Time validity (adaptive expiry)**: The expiry depends on setup conviction and box width. Calculate box width as `(resistance wall − support wall) / live price × 100`:
+
+  | Confidence | Box Width | Expiry (15min candles) | Expiry (hours) |
+  |---|---|---|---|
+  | HIGH | < 2% (tight) | 16 candles | 4h |
+  | HIGH | ≥ 2% | 32 candles | 8h |
+  | MEDIUM | any | 32 candles | 8h |
+  | LOW | any | 24 candles | 6h |
+
+  Output the exact UTC expiry time. LOW-conviction trades get less time than MEDIUM because they degrade faster — but more than HIGH-tight because wider boxes need time to resolve.
+
 - **Re-analysis trigger**: If price moves > 2% from the live price at report time without activating the trigger, the setup is stale — re-run the pipeline before placing or keeping the order.
 - **Structural invalidation**: If a new wall forms between the current price and the trigger price that is **equal to or stronger than** the breakout wall, the setup premise is broken — cancel the trigger.
 
@@ -248,6 +259,8 @@ Present results in a clean, actionable format. Start with the Quick Scan card, t
 │                                                           │
 │ MARKET MOOD: {1 sentence — overall direction + caution}   │
 └───────────────────────────────────────────────────────────┘
+Note: "Valid Until" applies to both Scenario A and Scenario B for that coin
+(both expire at the same time since they were generated from the same pipeline run).
 ```
 
 **Then, for each coin, the detailed breakdown:**
@@ -321,7 +334,7 @@ SCENARIO B — COUNTER ({OPPOSITE DIRECTION})
 
 ## Decision Rules
 
-1. **Minimum quality bar**: Only include coins where **expectancy is positive** (`winRate × RR > 1.0`) in at least two of the three backtest windows, **AND** the setup has at least **15 resolved trades** (`wins + losses ≥ 15`) in at least one window. Discard everything else silently. This allows high-RR/low-winRate strategies (e.g., 1:9 with 15% win rate = 1.35 expectancy) to qualify, while filtering out noise.
+1. **Minimum quality bar**: Only include coins where **expectancy is positive** (`winRate × RR > 1.0`) in at least two of the three backtest windows, **AND** the setup has at least **15 resolved trades** (`wins + losses ≥ 15`) in any one of the three windows (the sample-size gate only needs to pass once, not in every window). Discard everything else silently. This allows high-RR/low-winRate strategies (e.g., 1:9 with 15% win rate = 1.35 expectancy) to qualify, while filtering out noise.
 2. **Wall strength matters**: Only use walls tagged `l` or stronger for SL/TP anchoring. Weaker walls (`xs`, `s`, `m`) are noise.
 3. **Indicator conflict handling**: There are 4 indicators (CVD, OI, OB, Funding Rate). If 3 or more oppose the backtest direction, downgrade confidence to LOW and flag it clearly. Still present the scenario — the trader decides.
 4. **Funding rate squeeze rule**: If `fundingRateSignal` contains "Crowded" and the crowd is on the **same side** as your trade direction (e.g., crowded LONG and your setup is LONG), add a prominent squeeze risk warning. This is a serious risk factor — not just a minor flag.
@@ -332,7 +345,7 @@ SCENARIO B — COUNTER ({OPPOSITE DIRECTION})
 9. **Dominance matrix for BTC**: Do not run `/dominance-matrix` when the selected coin is BTC itself (BTCBTC is not a valid pair). For BTC setups, omit the Dominance Matrix section from the output.
 10. **Dominance matrix missing data**: If `coinBtcDataAvailable` is `false` (coin has no registered BTC pair), treat the matrix result as `NEUTRAL` — do not penalise confidence, but note "Coin/BTC data unavailable" in the output.
 11. **USDT.D warmup period**: `usdtDominanceDataAvailable` will be `false` for approximately the first 17 days after deployment (EMA99 on 4h candles needs ~17 days of 1-min raw samples from CoinGecko to be meaningful). During this period the USDT.D overlay is automatically skipped by the server — the `directionBias` you receive is the core 3-input matrix result. **Do not mention "USDT.D unavailable" in the report to the trader, do not include the USDT.D row in the output, and do not penalise confidence**. Proceed as if USDT.D is not part of the system yet.
-12. **Trigger expiry rule**: Every trigger order has a time validity of **16 candles** on the execution timeframe (default: 4 hours for 15min). Include the exact UTC expiry time in the output. A trigger sitting longer than this is stale — the market structure that justified it has likely shifted.
+12. **Trigger expiry rule (adaptive)**: Trigger expiry is not one-size-fits-all. HIGH-confidence setups with a tight box (< 2%) expire in 4 hours (16 candles); MEDIUM-confidence or HIGH with a wider box get 8 hours (32 candles); LOW-confidence gets 6 hours (24 candles). See the Invalidation Rules table in Phase 6 for the full matrix. Always include the exact UTC expiry time in the output.
 13. **Stale setup rule**: If the live price moves more than **2%** from the price at report time without activating the trigger, the setup is stale. Note this threshold in each scenario's invalidation line.
 
 ---
