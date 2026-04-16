@@ -363,6 +363,67 @@ Do not ask for confirmation before saving. Do not skip this step even if the pip
 
 ---
 
+## Phase 6 — Persian Audience PDF Report
+
+> **This phase runs only when activated via `/persianfeed`.** When running via `/dart`, skip this phase entirely.
+
+After saving the MD report in Report Persistence, generate a Persian-language PDF for the Telegram channel audience.
+
+### Step 1 — Select top coins
+
+Pick the top **3 coins** from Phase 5 ranked by overall confidence (HIGH > MEDIUM > LOW). If fewer than 3 qualified, use all that did.
+
+### Step 2 — Build the Persian JSON payload
+
+Write the following JSON structure. All text fields (`technical_summary`, `simple_conclusion`, `daily_conclusion`) must be in **Persian (Farsi)**. Keep each field concise:
+- `technical_summary`: 2–3 sentences — mention trend direction, key indicator alignment, and order book structure. Use some technical terms but keep them minimal.
+- `simple_conclusion`: 2–3 sentences — written for a complete beginner. No jargon. Plain language: "اگر قیمت از X دلار عبور کرد، می‌توانید وارد معامله خرید شوید. هدف سود Y دلار و حد ضرر Z دلار است."
+- `daily_conclusion`: 3–5 sentences — overall market mood for the day, which direction looks stronger, what to watch. Simple enough for a new trader to understand.
+- `tip`: omit this field — the script picks the tip automatically from its built-in pool based on the date.
+
+```json
+{
+  "date": "YYYY-MM-DD",
+  "coins": [
+    {
+      "symbol": "SYMBOL",
+      "direction": "LONG or SHORT",
+      "confidence": "HIGH or MEDIUM or LOW",
+      "technical_summary": "متن فارسی...",
+      "scenario_a": {
+        "trigger": "price as string",
+        "sl":      "price as string",
+        "tp":      "price as string",
+        "rr":      "ratio as string e.g. 3.0"
+      },
+      "scenario_b": {
+        "trigger": "price as string",
+        "sl":      "price as string",
+        "tp":      "price as string",
+        "rr":      "ratio as string"
+      },
+      "simple_conclusion": "متن فارسی ساده..."
+    }
+  ],
+  "daily_conclusion": "متن فارسی..."
+}
+```
+
+### Step 3 — Generate the PDF
+
+1. Write the JSON payload to a temp file: `/tmp/persian_report_YYYYMMDD_HHMM.json`
+2. Run the PDF generator:
+   ```
+   python3 scripts/generate_persian_pdf.py /tmp/persian_report_YYYYMMDD_HHMM.json reports/YYYY-MM-DD_HH-MM_fa.pdf
+   ```
+   Use the **same timestamp** as the MD report filename.
+3. Delete the temp JSON file.
+4. Confirm with one line: `Persian PDF saved → reports/YYYY-MM-DD_HH-MM_fa.pdf`
+
+If the script fails (missing font, missing dependency), print the error and instruct the user to run `bash scripts/setup.sh`, then continue. Do not stall the rest of the output.
+
+---
+
 ## Behaviour Rules
 
 - **Start working immediately** when activated. Do not ask "which coins?" or "what timeframe?" — use the defaults and run the full pipeline.
