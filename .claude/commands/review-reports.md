@@ -1,0 +1,1 @@
+Run the full report review pipeline as defined in @crypto-agent-review-prompt.md — scan all past reports, check outcomes against historical candle data, log results, and print the summary. Do not ask questions, execute all steps in order. If an argument is provided (e.g., "last 7 days"), only review reports within that time window. $ARGUMENTS

@@ -889,3 +889,93 @@ curl "http://193.36.85.229:8080/api/analysis/dominance-matrix?symbol=SOL&timefra
 ```bash
 curl "http://193.36.85.229:8080/api/analysis/dominance-matrix?symbol=ETH&timeframe=1h"
 ```
+
+---
+
+## 8. Historical Candles (Price Service)
+
+```
+GET /klines/online-candles
+```
+
+> **This endpoint lives on the Price Service** (`http://193.36.85.229:8081`), not the Analysis API (`8080`). It is the canonical source for historical OHLC candle data — used by the report review agent to check trade outcomes.
+
+Returns up to 1000 historical candles for a coin at a given timeframe, fetched live from Binance via the internal price service.
+
+### Query Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `symbol` | string | Yes | — | Coin base symbol (e.g., `BTC`, `ETH`, `FIL`) or full pair (e.g., `BTCUSDT`). Supports the same coin list as the Analysis API, plus BTC pairs (e.g., `SOLBTC`, `ETHBTC`). |
+| `granularity` | string | Yes | — | Candle interval: `1m` · `5m` · `15m` · `1h` · `4h` · `1d` |
+| `limit` | int | Yes | — | Number of candles to return. Range: 1–1000. |
+
+### Example Request
+
+```bash
+curl "http://193.36.85.229:8081/klines/online-candles?symbol=FIL&granularity=15m&limit=1000"
+```
+
+### Example Response
+
+```json
+[
+  {
+    "id": 7521912,
+    "symbol": "FIL",
+    "granularity": "15m",
+    "timestamp": 1732464000000,
+    "closeTimeStamp": 1732464899999,
+    "openPrice": 0.9823,
+    "highestPrice": 0.9845,
+    "lowestPrice": 0.9789,
+    "closePrice": 0.9812,
+    "baseCurrencyTradingVolume": 12345.67,
+    "quoteCurrencyTradingVolume": 12123.45,
+    "usdtVol": 12123.45,
+    "numberOfTrades": "456",
+    "takerBuyBaseVolume": "6789.01",
+    "takerBuyQuoteVolume": "6661.23",
+    "updatedAt": 1732464123456
+  }
+]
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `id` | long | Unique candle identifier |
+| `symbol` | string | Coin base symbol in uppercase |
+| `granularity` | string | Candle interval (echoes request) |
+| `timestamp` | long | Candle open time in milliseconds since epoch (UTC) |
+| `closeTimeStamp` | long | Candle close time in milliseconds since epoch (UTC) |
+| `openPrice` | double | Opening price in USDT |
+| `highestPrice` | double | Highest price during the candle period |
+| `lowestPrice` | double | Lowest price during the candle period |
+| `closePrice` | double | Closing price in USDT |
+| `baseCurrencyTradingVolume` | double | Volume in base currency (e.g., FIL) |
+| `quoteCurrencyTradingVolume` | double | Volume in quote currency (USDT) |
+| `usdtVol` | double | Volume in USDT |
+| `numberOfTrades` | string | Number of trades in the candle period |
+| `takerBuyBaseVolume` | string | Taker buy volume in base currency |
+| `takerBuyQuoteVolume` | string | Taker buy volume in quote currency |
+| `updatedAt` | long | Last update timestamp in milliseconds since epoch |
+
+### Coverage
+
+| Granularity | 1000 candles covers |
+|---|---|
+| `1m` | ~16.7 hours |
+| `5m` | ~3.5 days |
+| `15m` | ~10.4 days |
+| `1h` | ~41.7 days |
+| `4h` | ~166.7 days |
+| `1d` | ~2.7 years |
+
+### HTTP Status Codes
+
+| Code | Meaning |
+|------|---------|
+| 200 | Success — returns a JSON array (may be empty if the coin has no data) |
+| 500 | Internal error (e.g., Binance API unreachable) |
