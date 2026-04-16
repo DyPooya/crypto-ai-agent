@@ -900,7 +900,7 @@ GET /klines/online-candles
 
 > **This endpoint lives on the Price Service** (`http://193.36.85.229:8081`), not the Analysis API (`8080`). It is the canonical source for historical OHLC candle data — used by the report review agent to check trade outcomes.
 
-Returns up to 1000 historical candles for a coin at a given timeframe, fetched live from Binance via the internal price service.
+Returns up to 1500 historical candles for a coin at a given timeframe, fetched live from Binance via the internal price service.
 
 ### Query Parameters
 
@@ -908,12 +908,12 @@ Returns up to 1000 historical candles for a coin at a given timeframe, fetched l
 |-----------|------|----------|---------|-------------|
 | `symbol` | string | Yes | — | Coin base symbol (e.g., `BTC`, `ETH`, `FIL`) or full pair (e.g., `BTCUSDT`). Supports the same coin list as the Analysis API, plus BTC pairs (e.g., `SOLBTC`, `ETHBTC`). |
 | `granularity` | string | Yes | — | Candle interval: `1m` · `5m` · `15m` · `1h` · `4h` · `1d` |
-| `limit` | int | Yes | — | Number of candles to return. Range: 1–1000. |
+| `limit` | int | Yes | — | Number of candles to return. Range: 1–1500 (Binance API max). |
 
 ### Example Request
 
 ```bash
-curl "http://193.36.85.229:8081/klines/online-candles?symbol=FIL&granularity=15m&limit=1000"
+curl "http://193.36.85.229:8081/klines/online-candles?symbol=FIL&granularity=15m&limit=1500"
 ```
 
 ### Example Response
@@ -964,14 +964,14 @@ curl "http://193.36.85.229:8081/klines/online-candles?symbol=FIL&granularity=15m
 
 ### Coverage
 
-| Granularity | 1000 candles covers |
+| Granularity | 1500 candles covers |
 |---|---|
-| `1m` | ~16.7 hours |
-| `5m` | ~3.5 days |
-| `15m` | ~10.4 days |
-| `1h` | ~41.7 days |
-| `4h` | ~166.7 days |
-| `1d` | ~2.7 years |
+| `1m` | ~25 hours |
+| `5m` | ~5.2 days |
+| `15m` | ~15.6 days |
+| `1h` | ~62.5 days |
+| `4h` | ~250 days |
+| `1d` | ~4.1 years |
 
 ### HTTP Status Codes
 

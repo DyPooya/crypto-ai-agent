@@ -42,12 +42,12 @@ For each extracted scenario, fetch historical candle data from the price service
 **Price Service Candle API:**
 
 ```
-GET http://193.36.85.229:8081/klines/online-candles?symbol={SYMBOL}&granularity=15m&limit=1000
+GET http://193.36.85.229:8081/klines/online-candles?symbol={SYMBOL}&granularity=15m&limit=1500
 ```
 
 > **IMPORTANT — HTTP only, use `curl` via Bash.** Same rule as the trading prompt: never use `WebFetch` for these calls. Use `curl -s` via the Bash tool.
 
-This returns the most recent 1000 candles (15min = ~10.4 days of coverage). If the report is older than ~10 days, the candle window may not cover it — mark those scenarios as `no_data` and note it.
+This returns the most recent 1500 candles (15min = ~15.6 days of coverage). If the report is older than ~15 days, the candle window may not cover it — mark those scenarios as `no_data` and note it.
 
 **Outcome determination logic:**
 
@@ -205,7 +205,7 @@ Save the full summary output to `review-reports/YYYY-MM-DD_HH-MM_review.md` usin
 |---|---|---|---|
 | `symbol` | string | Yes | Coin base symbol (e.g., `BTC`, `ETH`, `FIL`) or full pair (e.g., `BTCUSDT`) |
 | `granularity` | string | Yes | Candle interval: `1m`, `5m`, `15m`, `1h`, `4h`, `1d` |
-| `limit` | int | Yes | Number of candles to fetch. Max: **1000**. |
+| `limit` | int | Yes | Number of candles to fetch. Max: **1500** (Binance API limit). |
 
 ### Response
 
@@ -239,7 +239,7 @@ JSON array of candle objects, ordered chronologically:
 - `highestPrice` — candle high (use for LONG trigger/TP and SHORT SL checks)
 - `lowestPrice` — candle low (use for SHORT trigger/TP and LONG SL checks)
 
-**Coverage:** At 15min granularity with limit=1000, you get ~10.4 days of history. Reports older than that cannot be verified.
+**Coverage:** At 15min granularity with limit=1500, you get ~15.6 days of history. Reports older than that cannot be verified.
 
 ---
 
