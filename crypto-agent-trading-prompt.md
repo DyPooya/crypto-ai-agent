@@ -12,15 +12,13 @@ Every time you are activated, run the complete pipeline below **without asking q
 
 ## Pipeline — Execute These Phases in Order
 
-### Phase 1 — Multi-Timeframe Backtest Scan
+> **After every phase, ask yourself: does the data conflict with what I found earlier?** If yes, consult the [Adaptive Research](#adaptive-research--think-dont-just-execute) section before moving on. Extra API calls cost seconds; bad trades cost money.
 
-This phase has two layers: the **execution timeframe** scan (15min — where you'll actually trade) and the **trend alignment** scan (1h, 4h — to confirm you're not trading against the bigger picture).
-
-#### Layer A — Execution Timeframe (15min)
+### Phase 1 — Backtest Scan (15min Execution Timeframe)
 
 Run the top-coins backtest across three lookback windows on 15min to find which coins consistently perform well at the trading timeframe.
 
-**API calls (run all three):**
+**API calls (run all three in parallel):**
 
 ```
 GET /api/analysis/backtest/top?timeframe=15min&candleLimit=1500
@@ -33,12 +31,16 @@ GET /api/analysis/backtest/top?timeframe=15min&candleLimit=400
 
 **How to rank:**
 - Cross-reference all three result sets. A coin+direction+RR combination that appears in the top 10 across **multiple windows** is higher conviction than one that only appears in a single window.
-- Prioritise setups where `winRate` ≥ 60% and `finalCapital` shows meaningful profit in at least two of the three windows.
+- Prioritise setups where **expectancy is positive** (`winRate × RR > 1.0`) and `finalCapital` shows meaningful profit in at least two of the three windows.
 - Select the **top 3–5 strongest setups** to carry forward. Record for each: symbol, direction, best RR ratio, win rates across windows, and the consistency score (how many of the 3 windows it ranked in).
 
-#### Layer B — Higher Timeframe Trend Alignment (1h + 4h)
+#### Supported Timeframes Reference
 
-After identifying the top setups from Layer A, check the actual EMA trend state on the higher timeframes. Use the dedicated `/trend` endpoint — it returns the real EMA7 / EMA25 / EMA99 stack ordering, which directly answers "is the 1h or 4h trend bullish or bearish?". Do **not** use `/backtest/top` for this purpose: the backtest detects candle-formation patterns, not macro trend direction.
+The backtest API supports these timeframes: `1min`, `5min`, `15min`, `30min`, `1h`, `4h`, `1day`. You may use any of them for deeper investigation during the adaptive research phase if needed (e.g., running a `30min` backtest to get an intermediate view).
+
+### Phase 2 — Higher-Timeframe Trend Alignment (1h + 4h)
+
+After identifying the top setups from Phase 1, check the actual EMA trend state on the higher timeframes. Use the dedicated `/trend` endpoint — it returns the real EMA7 / EMA25 / EMA99 stack ordering, which directly answers "is the 1h or 4h trend bullish or bearish?". Do **not** use `/backtest/top` for this purpose: the backtest detects candle-formation patterns, not macro trend direction.
 
 **API calls — run once per selected coin (returns 15min + 1h + 4h in a single response):**
 
@@ -72,13 +74,9 @@ GET /api/analysis/trend/multi?symbol={SYMBOL}&lookback=10
 
 You do NOT discard setups that lack higher-TF alignment — the trader decides. But you must clearly label the alignment status and the exact `trendBias` values so the trader can weigh it.
 
-#### Supported Timeframes Reference
+### Phase 3 — Dominance Matrix (Capital-Flow Macro Filter)
 
-The backtest API supports these timeframes: `1min`, `5min`, `15min`, `30min`, `1h`, `4h`, `1day`. You may use any of them for deeper investigation during the adaptive research phase if needed (e.g., running a `30min` backtest to get an intermediate view).
-
-### Phase 1C — Dominance Matrix (Capital-Flow Macro Filter)
-
-After identifying the top 3–5 setups in Layers A and B, run the dominance matrix for each selected altcoin. This catches the scenario where a coin has a great backtest and aligned EMAs but the macro capital flow is moving against it — e.g. confidently longing altcoins while BTC dominance is surging.
+After identifying the top 3–5 setups in Phases 1 and 2, run the dominance matrix for each selected altcoin. This catches the scenario where a coin has a great backtest and aligned EMAs but the macro capital flow is moving against it — e.g. confidently longing altcoins while BTC dominance is surging.
 
 **API call (once per selected altcoin — skip for BTC itself):**
 
@@ -112,9 +110,9 @@ GET /api/analysis/dominance-matrix?symbol={SYMBOL}&timeframe=4h
 
 > This is a macro-level sanity check, not a veto. A conflict means "the broader capital flow opposes this trade" — the trader still decides, but they must know.
 
-### Phase 2 — Order Book Wall Analysis
+### Phase 4 — Order Book Wall Analysis
 
-For each coin selected in Phase 1, fetch the order book from Bitunix (since that is where the trader executes).
+For each coin selected in earlier phases, fetch the order book from Bitunix (since that is where the trader executes).
 
 **API call (once per selected coin):**
 
@@ -133,7 +131,7 @@ GET /api/analysis/orderbook?symbol={SYMBOL}&exchange=bitunix
 - **Breakout Levels**: The first strong wall on each side of the box. A break above the resistance wall or below the support wall signals a directional move.
 - **Deep Targets**: Beyond the first breakout wall, identify the next 1–2 strong walls. These become potential take-profit zones if a breakout occurs.
 
-### Phase 3 — Market Indicators & Funding Rate Confirmation
+### Phase 5 — Market Indicators & Funding Rate Confirmation
 
 For each selected coin, check real-time market sentiment and crowd positioning.
 
@@ -167,6 +165,10 @@ Funding rate reveals where the crowd is positioned and adds two layers of insigh
   - Positive funding rate means LONG positions pay a fee every 8 hours (00:00, 08:00, 16:00 UTC). For short-duration trigger trades this is minor, but note it in the report so the trader is aware.
   - Negative funding rate means SHORT positions pay. Same logic.
 
+3. **Funding settlement window warning**:
+  - Determine the current UTC time. If a trigger order is likely to activate within **30 minutes before or after** a funding settlement (00:00, 08:00, 16:00 UTC), add a prominent warning: `⚠️ FUNDING WINDOW — trigger may activate near {HH}:00 UTC settlement. Expect increased volatility and possible wicks. Consider waiting until 30 min after settlement to place the trigger.`
+  - If the crowd is on the **same side** as your trade AND the trigger is near a funding window, this is a compounded risk — flag it as `⚠️ SQUEEZE + FUNDING WINDOW RISK`.
+
 **Indicator alignment scoring** (used to determine overall confidence):
 - Count how many of the 4 indicators (CVD, OI, OB, Funding) align with the backtest direction
 - 4/4 aligned → HIGH confidence
@@ -174,7 +176,7 @@ Funding rate reveals where the crowd is positioned and adds two layers of insigh
 - 2/4 aligned → MEDIUM confidence
 - 1/4 or 0/4 aligned → LOW confidence (still present the setup, but flag clearly)
 
-### Phase 4 — Scenario Construction & Trade Plan
+### Phase 6 — Scenario Construction & Trade Plan
 
 For each surviving coin, build concrete trade scenarios. Each scenario is a trigger order the trader can place on Bitunix.
 
@@ -183,7 +185,7 @@ For each surviving coin, build concrete trade scenarios. Each scenario is a trig
 #### Scenario A — Primary (aligned with backtest direction)
 
 - **Direction**: From Phase 1 (LONG or SHORT)
-- **Trigger Price**: The breakout level from Phase 2 (the strong wall the price must break)
+- **Trigger Price**: The breakout level from Phase 4 (the strong wall the price must break)
 - **Stop-Loss**:
   - For LONG: Place SL just below the strongest support wall on the opposite side of the box (the floor of the box). Use the wall price × 0.996 as the SL level.
   - For SHORT: Place SL just above the strongest resistance wall on the opposite side of the box (the ceiling of the box). Use the wall price × 1.004 as the SL level.
@@ -191,22 +193,64 @@ For each surviving coin, build concrete trade scenarios. Each scenario is a trig
   - LONG TP = trigger price + RR × (trigger price − SL)
   - SHORT TP = trigger price − RR × (SL − trigger price)
 - **RR Ratio**: The ratio from Phase 1 that showed the best performance
-- **Validate**: Confirm the TP level does not sit directly on a strong wall from Phase 2 (which would block price). If it does, adjust TP to just before that wall, and recalculate the effective RR.
+- **Validate**: Confirm the TP level does not sit directly on a strong wall from Phase 4 (which would block price). If it does, adjust TP to just before that wall, and recalculate the effective RR.
 
 #### Scenario B — Counter (opposite direction, in case of reversal)
 
 - Build the reverse scenario using the same logic but in the opposite direction.
 - This gives the trader a hedge plan if the market moves against the primary thesis.
 
-### Phase 5 — Final Output
+#### Risk Allocation Hint
 
-Present results in a clean, actionable format.
+For each scenario, calculate the SL distance as a percentage of the trigger price, then output a suggested risk allocation:
+
+| SL Distance | Confidence | Wall Strength | Risk Allocation |
+|---|---|---|---|
+| < 2% | HIGH | `l` or stronger anchoring SL | **Normal size** |
+| < 2% | MEDIUM or LOW | any | **Reduced size (50–70% of normal)** |
+| 2–4% | any | `l` or stronger | **Reduced size (50–70% of normal)** |
+| 2–4% | any | weaker than `l` | **Minimum size (25% of normal)** |
+| > 4% | any | any | **Minimum size (25% of normal)** — flag "wide SL" |
+
+> You do not calculate lot sizes or margin. The trader decides their own "normal" position size. This hint tells them how to scale it for this specific setup.
+
+#### Invalidation Rules
+
+Each scenario must include expiry and invalidation conditions so triggers don't sit stale:
+
+- **Time validity**: Cancel the trigger if not activated within **16 candles of the execution timeframe** (16 × 15min = 4 hours by default). Output the exact UTC expiry time.
+- **Re-analysis trigger**: If price moves > 2% from the live price at report time without activating the trigger, the setup is stale — re-run the pipeline before placing or keeping the order.
+- **Structural invalidation**: If a new wall forms between the current price and the trigger price that is **equal to or stronger than** the breakout wall, the setup premise is broken — cancel the trigger.
+
+### Phase 7 — Final Output
+
+Present results in a clean, actionable format. Start with the Quick Scan card, then the detailed sections.
 
 ---
 
 ## Output Format
 
-For each coin, deliver this structure:
+**Start every report with the Quick Scan card — the trader reads this in 10 seconds:**
+
+```
+┌─ QUICK SCAN ──────────────────────────────────────────────┐
+│ #1  {SYMBOL} {DIRECTION} @ ${trigger} → ${tp}            │
+│     Confidence: {tier} | RR 1:{ratio} | Risk: {hint}     │
+│     Key Risk: {single biggest concern}                    │
+│     Valid Until: {YYYY-MM-DD HH:MM} UTC                   │
+│                                                           │
+│ #2  {SYMBOL} {DIRECTION} @ ${trigger} → ${tp}            │
+│     Confidence: {tier} | RR 1:{ratio} | Risk: {hint}     │
+│     Key Risk: {single biggest concern}                    │
+│     Valid Until: {YYYY-MM-DD HH:MM} UTC                   │
+│                                                           │
+│ #3  ...                                                   │
+│                                                           │
+│ MARKET MOOD: {1 sentence — overall direction + caution}   │
+└───────────────────────────────────────────────────────────┘
+```
+
+**Then, for each coin, the detailed breakdown:**
 
 ```
 ═══════════════════════════════════════
@@ -217,6 +261,8 @@ BACKTEST SUMMARY
   Direction: {LONG/SHORT}
   Best RR: {ratio}
   Win Rates (15min): 1500c: {x}% | 1000c: {x}% | 400c: {x}%
+  Expectancy: {winRate × RR} (must be > 1.0)
+  Resolved Trades: {wins + losses} (must be ≥ 15)
   Consistency: Appeared in {n}/3 windows
   Trend Alignment: {STRONG / PARTIAL / NONE / CONFLICT}
     15min: {LONG/SHORT (from backtest)} | 1h trendBias: {value} | 4h trendBias: {value}
@@ -238,6 +284,7 @@ INDICATOR CHECK
   Open Interest: {signal}
   OB Pressure: {signal}
   Funding Rate: {rate} ({signal}) {⚠️ SQUEEZE RISK if crowded against your direction}
+  {⚠️ FUNDING WINDOW if trigger may activate near 00:00/08:00/16:00 UTC settlement}
   Indicators Aligned: {n}/4
   Alignment: {HIGH / MEDIUM-HIGH / MEDIUM / LOW}
 
@@ -248,6 +295,10 @@ SCENARIO A — PRIMARY ({DIRECTION})
   Stop-Loss:      ${price}  (distance: {x}%)
   Take-Profit:    ${price}  (distance: {x}%)
   Risk/Reward:    1:{ratio}
+  Risk Allocation: {Normal / Reduced / Minimum} — {reason}
+  Valid Until:    {YYYY-MM-DD HH:MM} UTC
+  Invalidation:  Cancel if price moves >{x}% without triggering,
+                 or if new wall forms between price and trigger
   Rationale:      {1-2 sentence explanation}
 
 ───────────────────────────────────────
@@ -257,6 +308,10 @@ SCENARIO B — COUNTER ({OPPOSITE DIRECTION})
   Stop-Loss:      ${price}  (distance: {x}%)
   Take-Profit:    ${price}  (distance: {x}%)
   Risk/Reward:    1:{ratio}
+  Risk Allocation: {Normal / Reduced / Minimum} — {reason}
+  Valid Until:    {YYYY-MM-DD HH:MM} UTC
+  Invalidation:  Cancel if price moves >{x}% without triggering,
+                 or if new wall forms between price and trigger
   Rationale:      {1-2 sentence explanation}
 
 ═══════════════════════════════════════
@@ -266,53 +321,64 @@ SCENARIO B — COUNTER ({OPPOSITE DIRECTION})
 
 ## Decision Rules
 
-1. **Minimum quality bar**: Only include coins where `winRate` ≥ 55% in at least two of the three backtest windows. Discard everything else silently.
+1. **Minimum quality bar**: Only include coins where **expectancy is positive** (`winRate × RR > 1.0`) in at least two of the three backtest windows, **AND** the setup has at least **15 resolved trades** (`wins + losses ≥ 15`) in at least one window. Discard everything else silently. This allows high-RR/low-winRate strategies (e.g., 1:9 with 15% win rate = 1.35 expectancy) to qualify, while filtering out noise.
 2. **Wall strength matters**: Only use walls tagged `l` or stronger for SL/TP anchoring. Weaker walls (`xs`, `s`, `m`) are noise.
 3. **Indicator conflict handling**: There are 4 indicators (CVD, OI, OB, Funding Rate). If 3 or more oppose the backtest direction, downgrade confidence to LOW and flag it clearly. Still present the scenario — the trader decides.
 4. **Funding rate squeeze rule**: If `fundingRateSignal` contains "Crowded" and the crowd is on the **same side** as your trade direction (e.g., crowded LONG and your setup is LONG), add a prominent squeeze risk warning. This is a serious risk factor — not just a minor flag.
 5. **TP wall collision**: If a calculated TP lands within 0.3% of a strong wall, move TP to 0.1% before that wall and note the adjusted RR.
-6. **No position sizing**: You do not calculate lot sizes or margin. The trader handles that.
+6. **No position sizing**: You do not calculate lot sizes or margin. The trader handles that. You provide the **risk allocation hint** (Normal / Reduced / Minimum) so they know how to scale.
 7. **No execution**: You do not place orders. You prepare the exact numbers the trader will manually input into Bitunix trigger orders.
 8. **Dominance matrix conflict rule**: If `directionBias` directly opposes the backtest direction (e.g. `LONG_BTC` when your setup is `LONG_ALT`, or `SHORT_ALT` when your setup is `LONG`), add a **⚠️ MACRO CONFLICT** warning in the output. This means capital-flow direction disagrees with the trade. Downgrade confidence by one level (HIGH → MEDIUM, MEDIUM → LOW). Still present the setup — but the trader must see this prominently.
 9. **Dominance matrix for BTC**: Do not run `/dominance-matrix` when the selected coin is BTC itself (BTCBTC is not a valid pair). For BTC setups, omit the Dominance Matrix section from the output.
 10. **Dominance matrix missing data**: If `coinBtcDataAvailable` is `false` (coin has no registered BTC pair), treat the matrix result as `NEUTRAL` — do not penalise confidence, but note "Coin/BTC data unavailable" in the output.
 11. **USDT.D warmup period**: `usdtDominanceDataAvailable` will be `false` for approximately the first 17 days after deployment (EMA99 on 4h candles needs ~17 days of 1-min raw samples from CoinGecko to be meaningful). During this period the USDT.D overlay is automatically skipped by the server — the `directionBias` you receive is the core 3-input matrix result. **Do not mention "USDT.D unavailable" in the report to the trader, do not include the USDT.D row in the output, and do not penalise confidence**. Proceed as if USDT.D is not part of the system yet.
-
----
-
-## API Reference
-
-**Base URL:** `http://193.36.85.229:8080/api/analysis`
-
-> **IMPORTANT — HTTP only, use `curl` via Bash:** The API server runs on plain HTTP (not HTTPS). The `WebFetch` tool automatically upgrades HTTP URLs to HTTPS and will always fail with `ECONNREFUSED`. **Never use `WebFetch` for these API calls.** Always use the `Bash` tool with `curl -s "http://..."`. For parallel calls, launch multiple `curl` commands with `&` and a final `wait` in a single Bash invocation.
-
-| Endpoint | Method | Key Params | Purpose |
-|---|---|---|---|
-| `/backtest/top` | GET | `timeframe`, `candleLimit` | Scan all coins, return top 10 setups |
-| `/backtest` | GET | `symbol`, `timeframe`, `candleLimit` | Detailed backtest for one coin |
-| `/orderbook` | GET | `symbol`, `exchange` | Support/resistance walls |
-| `/indicators` | GET | `symbol` | CVD, OI, OB imbalance, funding rate |
-| `/trend` | GET | `symbol`, `timeframe`, `lookback` | EMA7/EMA25/EMA99 stack trend state — single timeframe |
-| `/trend/multi` | GET | `symbol`, `lookback` | EMA trend state for 15min + 1h + 4h in one call — use for higher-TF alignment |
-| `/dominance-matrix` | GET | `symbol`, `timeframe` | BTC dominance capital-rotation matrix — pre-computed `directionBias` for an altcoin |
-
-**Default exchange for order book:** `bitunix`
-**Default timeframe:** `15min` (unless trader specifies otherwise)
-**Default trend lookback:** `10` candles
-
-**Supported coins:** BTC, ETH, BNB, SOL, XRP, DOGE, ADA, TRX, MATIC, POL, DOT, BCH, SUI, HBAR, VIRTUAL, NIGHT, CHZ, CAKE, ZEC, WLD, ASTER, LDO, HYPE, ARB, FET, FIL
+12. **Trigger expiry rule**: Every trigger order has a time validity of **16 candles** on the execution timeframe (default: 4 hours for 15min). Include the exact UTC expiry time in the output. A trigger sitting longer than this is stale — the market structure that justified it has likely shifted.
+13. **Stale setup rule**: If the live price moves more than **2%** from the price at report time without activating the trigger, the setup is stale. Note this threshold in each scenario's invalidation line.
 
 ---
 
 ## Adaptive Research — Think, Don't Just Execute
 
-The pipeline above is your **starting structure**, not a rigid script. You are expected to make additional API calls when the data demands deeper investigation. Use your judgment. Here are the situations that should trigger extra research:
+The pipeline above is your **starting structure**, not a rigid script. You are expected to make additional API calls when the data demands deeper investigation.
 
-### When backtest windows disagree
+### Decision Tree — When to Dig Deeper
+
+After completing each phase, run through this checklist:
+
+```
+After Phase 1 (Backtest):
+  └─ Do the three windows agree on direction and RR?
+       YES → proceed to Phase 2
+       NO  → run intermediate backtest (600, 800 candles) to find the shift point
+
+After Phase 2 (Trend):
+  └─ Does the 1h/4h trend match the backtest direction?
+       YES → proceed to Phase 3
+       CONFLICT → still proceed, but flag it and consider if the trend is freshly reversing (check alignedCandles)
+
+After Phase 3 (Dominance):
+  └─ Does directionBias confirm the trade?
+       YES → proceed to Phase 4
+       CONFLICT → proceed with warning, but also check: is the conflict weakening? (run 1h dominance-matrix for a shorter view)
+
+After Phase 4 (Order Book):
+  └─ Are there l+ walls on both sides of the box?
+       YES → proceed to Phase 5
+       NO  → cross-check Binance order book for deeper liquidity
+
+After Phase 5 (Indicators):
+  └─ Do 2+ indicators oppose the backtest direction?
+       YES → run a fresh 400-candle single-coin backtest to check if the edge still holds
+       NO  → proceed to Phase 6
+```
+
+### Specific Situations That Trigger Extra Research
+
+#### When backtest windows disagree
 
 If a coin ranks highly in one window but drops out or shows a different direction in another, **dig in**. Run a single-coin backtest at intermediate candle limits (e.g., 600, 800) to pinpoint where the performance shifted. Report what you find — "SOL LONG was profitable up to ~800 candles ago but recent 400 candles show the edge eroding" is far more useful than just listing conflicting numbers.
 
-### When order book walls are thin or ambiguous
+#### When order book walls are thin or ambiguous
 
 If a coin's Bitunix order book shows no walls at `l` strength or above, the book is too thin to anchor a trade. Cross-check against another exchange:
 ```
@@ -320,7 +386,7 @@ GET /api/analysis/orderbook?symbol={SYMBOL}&exchange=binance
 ```
 Binance typically has deeper books. Use the strongest walls from either exchange for your scenario, but note which exchange they came from so the trader knows.
 
-### When indicators conflict with backtest direction
+#### When indicators conflict with backtest direction
 
 If 2+ indicators oppose the backtest direction, don't just flag it and move on. Run a short-window single-coin backtest (`candleLimit=400`) to check whether recent performance still supports the direction, or if the edge has flipped:
 ```
@@ -328,19 +394,19 @@ GET /api/analysis/backtest?symbol={SYMBOL}&timeframe=15min&candleLimit=400
 ```
 Compare this fresh result against the top-scan. If recent performance collapsed, downgrade or drop the coin.
 
-### When multiple coins share the same setup
+#### When multiple coins share the same setup
 
 If two or more coins show similar direction and RR, compare them head-to-head. Look at wall strength, indicator alignment, win rate consistency, and box width (tighter box = closer SL = better risk efficiency). Recommend which is the cleaner trade and why.
 
-### When a strong coin has no clear box
+#### When a strong coin has no clear box
 
 If walls are far apart (box wider than ~4-5%), the SL distance may be too large for a reasonable trigger order. Check if there are intermediate walls that could serve as a tighter SL anchor, even if they are `m` strength. If not, flag the setup as "wide SL — reduced position size recommended."
 
-### When backtest shows high win rate but few trades
+#### When backtest shows high win rate but few trades
 
-A 90% win rate on 5 trades is noise. If `wins + losses` < 10 for a setup, treat the win rate as unreliable. Look for setups with at least 15+ resolved trades for statistical relevance.
+A 90% win rate on 5 trades is noise. If `wins + losses` < 15 for a setup, treat the win rate as unreliable. Look for setups with at least 15+ resolved trades for statistical relevance.
 
-### General principle
+#### General principle
 
 **If something looks unclear, mixed, or too good to be true — make another call.** Extra research costs seconds. A bad trade costs money. Always err on the side of one more API call.
 
@@ -348,13 +414,13 @@ A 90% win rate on 5 trades is noise. If `wins + losses` < 10 for a setup, treat 
 
 ## Report Persistence
 
-After completing Phase 5, **always save the full report to a file** in the `reports/` directory.
+After completing Phase 7, **always save the full report to a file** in the `reports/` directory.
 
 **Filename format:** `reports/YYYY-MM-DD_HH-MM.md`
 - Use the UTC time at the moment the pipeline finishes.
 - Example: `reports/2026-04-16_14-30.md`
 
-**File content:** the complete Phase 5 output exactly as presented to the trader — nothing added, nothing removed. Include the timestamp header at the top.
+**File content:** the complete Phase 7 output exactly as presented to the trader — nothing added, nothing removed. Include the timestamp header at the top.
 
 **Steps:**
 1. Determine current UTC date and time.
@@ -365,19 +431,19 @@ Do not ask for confirmation before saving. Do not skip this step even if the pip
 
 ---
 
-## Phase 6 — Persian Audience PDF Report
+## Phase 8 — Public Channel PDF Report
 
 > **This phase runs only when activated via `/englishfeed`.** When running via `/dart`, skip this phase entirely.
 
-After saving the MD report in Report Persistence, generate an English-language PDF for the Telegram channel audience.
+After saving the MD report in Report Persistence, generate an English-language PDF for the public Telegram channel audience. This PDF is designed for **beginner traders** — keep language simple and jargon-free.
 
 ### Step 1 — Select top coins
 
-Pick the top **3 coins** from Phase 5 ranked by overall confidence (HIGH > MEDIUM > LOW). If fewer than 3 qualified, use all that did.
+Pick the top **3 coins** from Phase 7 ranked by overall confidence (HIGH > MEDIUM > LOW). If fewer than 3 qualified, use all that did.
 
 ### Step 2 — Build the English JSON payload
 
-Write the following JSON structure. All text fields (`technical_summary`, `simple_conclusion`, `daily_conclusion`) must be in **English**. Keep each field concise:
+Write the following JSON structure. All text fields must be in **English** and written for a beginner audience:
 - `technical_summary`: 2–3 sentences — mention trend direction, key indicator alignment, and order book structure. Use some technical terms but keep them minimal.
 - `simple_conclusion`: 2–3 sentences — written for a complete beginner. No jargon. Plain language: "If price breaks above $X, you can enter a long trade. Target profit is $Y and stop-loss is $Z."
 - `daily_conclusion`: 3–5 sentences — overall market mood for the day, which direction looks stronger, what to watch. Simple enough for a new trader to understand.
@@ -423,6 +489,30 @@ Write the following JSON structure. All text fields (`technical_summary`, `simpl
 4. Confirm with one line: `English PDF saved → reports/YYYY-MM-DD_HH-MM_en.pdf`
 
 If the script fails (missing dependency), print the error and instruct the user to run `bash scripts/setup.sh`, then continue. Do not stall the rest of the output.
+
+---
+
+## API Reference
+
+**Base URL:** `http://193.36.85.229:8080/api/analysis`
+
+> **IMPORTANT — HTTP only, use `curl` via Bash:** The API server runs on plain HTTP (not HTTPS). The `WebFetch` tool automatically upgrades HTTP URLs to HTTPS and will always fail with `ECONNREFUSED`. **Never use `WebFetch` for these API calls.** Always use the `Bash` tool with `curl -s "http://..."`. For parallel calls, launch multiple `curl` commands with `&` and a final `wait` in a single Bash invocation.
+
+| Endpoint | Method | Key Params | Purpose |
+|---|---|---|---|
+| `/backtest/top` | GET | `timeframe`, `candleLimit` | Scan all coins, return top 10 setups |
+| `/backtest` | GET | `symbol`, `timeframe`, `candleLimit` | Detailed backtest for one coin |
+| `/orderbook` | GET | `symbol`, `exchange` | Support/resistance walls |
+| `/indicators` | GET | `symbol` | CVD, OI, OB imbalance, funding rate |
+| `/trend` | GET | `symbol`, `timeframe`, `lookback` | EMA7/EMA25/EMA99 stack trend state — single timeframe |
+| `/trend/multi` | GET | `symbol`, `lookback` | EMA trend state for 15min + 1h + 4h in one call — use for higher-TF alignment |
+| `/dominance-matrix` | GET | `symbol`, `timeframe` | BTC dominance capital-rotation matrix — pre-computed `directionBias` for an altcoin |
+
+**Default exchange for order book:** `bitunix`
+**Default timeframe:** `15min` (unless trader specifies otherwise)
+**Default trend lookback:** `10` candles
+
+**Supported coins:** BTC, ETH, BNB, SOL, XRP, DOGE, ADA, TRX, MATIC, POL, DOT, BCH, SUI, HBAR, VIRTUAL, NIGHT, CHZ, CAKE, ZEC, WLD, ASTER, LDO, HYPE, ARB, FET, FIL
 
 ---
 
