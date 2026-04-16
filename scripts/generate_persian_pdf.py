@@ -128,14 +128,16 @@ C_LIGHT_LINE = colors.HexColor("#dddddd")
 def make_styles() -> dict:
     base = dict(fontName="Vazir", alignment=TA_RIGHT)
     bold = dict(fontName="Vazir-Bold", alignment=TA_RIGHT)
+    bold_center = {**bold, "alignment": TA_CENTER}
+    base_center = {**base, "alignment": TA_CENTER}
 
     return {
-        "title": ParagraphStyle("title", **bold,
-            fontSize=15, leading=26, alignment=TA_CENTER,
+        "title": ParagraphStyle("title", **bold_center,
+            fontSize=15, leading=26,
             textColor=C_DARK_BLUE, spaceAfter=2),
 
-        "subtitle": ParagraphStyle("subtitle", **base,
-            fontSize=9, leading=16, alignment=TA_CENTER,
+        "subtitle": ParagraphStyle("subtitle", **base_center,
+            fontSize=9, leading=16,
             textColor=C_GRAY, spaceAfter=6),
 
         "tip": ParagraphStyle("tip", **base,
@@ -170,8 +172,8 @@ def make_styles() -> dict:
         "daily_conc": ParagraphStyle("daily_conc", **base,
             fontSize=9.5, leading=17, spaceAfter=4),
 
-        "footer": ParagraphStyle("footer", **base,
-            fontSize=7.5, leading=13, alignment=TA_CENTER,
+        "footer": ParagraphStyle("footer", **base_center,
+            fontSize=7.5, leading=13,
             textColor=C_GRAY),
     }
 
