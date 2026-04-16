@@ -1,0 +1,8 @@
+# PDF reports — too large for git
+*.pdf
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
