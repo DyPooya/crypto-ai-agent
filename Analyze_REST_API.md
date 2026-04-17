@@ -11,6 +11,7 @@ All endpoints:
 - Require no authentication (same as existing endpoints)
 - Do **not** send Telegram notifications — results are returned directly to the caller
 - Produce structured logs at `INFO` level for each request
+- Exception: `/catalysts` **does** send a Telegram alert to `DART_SIGNALS` when an upstream API fails or returns an unexpected schema
 
 ---
 
@@ -25,6 +26,9 @@ All endpoints:
 | GET | `/api/analysis/trend` | Higher-timeframe EMA trend state (EMA7 / EMA25 / EMA99) for a coin |
 | GET | `/api/analysis/trend/multi` | EMA trend state for 15min + 1h + 4h in a single call |
 | GET | `/api/analysis/dominance-matrix` | BTC dominance capital-rotation matrix — pre-computed direction bias for a coin |
+| GET | `/api/analysis/catalysts` | Aggregated macro events (Finnhub) + token catalysts (CoinMarketCal) within a time window |
+| GET | `/api/analysis/journal` | Manual trade-journal entries with aggregate P&L stats and real-time unrealized PnL for open trades |
+| GET | `/api/analysis/positions` | Engine-generated exchange positions (AI signal results) with aggregate WIN/LOSS/OPEN counters |
 
 ---
 
@@ -705,6 +709,131 @@ The server simplifies each EMA `trendBias` to `RISING` (BULLISH), `FALLING` (BEA
 
 ---
 
+## 8. Catalysts — Macro Events & Token Catalysts
+
+```
+GET /api/analysis/catalysts
+```
+
+Returns a unified view of upcoming macro economic events and crypto-specific token catalysts within a configurable look-ahead window. The agent can make one call and get a structured answer covering both risk domains — no need to reason about two different API formats.
+
+**Why this endpoint exists:** The trading engine makes decisions based on technical indicators. Scheduled events can invalidate any technical setup instantly — a hawkish CPI print can dump BTC 3% in minutes, and a token unlock can override a clean chart pattern regardless of signal quality. This endpoint gives the agent awareness of those landmines before a trade is placed.
+
+**Data sources:**
+- Macro events — [Finnhub Economic Calendar](https://finnhub.io/docs/api/economic-calendar), filtered to `country=US` and `impact=high`
+- Token catalysts — [CoinMarketCal v1 Events API](https://api.coinmarketcal.com), all categories (unlocks, listings, hard forks, mainnet launches, etc.)
+
+**Caching:** Both upstream APIs are cached server-side for **60 minutes**. The server pre-fetches a 7-day window on each cache refresh. All callers with different `hours` parameters share the same warm cache — the server filters on the fly.
+
+**Error behaviour:** If either upstream API fails or returns an unexpected schema, the affected domain returns an empty list, a human-readable entry is added to `warnings`, and a Telegram alert is sent to `DART_SIGNALS`. The response is always HTTP 200.
+
+### Query Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `symbols` | string | No | all supported coins | Comma-separated coin base symbols to include in `tokenCatalysts` (e.g. `BTC,SOL,ETH,FIL`). When omitted, all supported coins are included. |
+| `hours` | int | No | `48` | Look-ahead window size in hours. Range: 1–168 (1 hour to 7 days). Clamped automatically if out of range. |
+
+### Example Request
+
+```
+GET /api/analysis/catalysts?symbols=BTC,ETH,SOL,FIL&hours=48
+```
+
+### Example Response
+
+```json
+{
+  "generatedAt": "2026-04-17 14:30:00 UTC",
+  "cacheAgeMinutes": 12,
+  "windowHours": 48,
+  "macroEvents": [
+    {
+      "name": "CPI YoY",
+      "country": "US",
+      "impact": "high",
+      "scheduledAt": "2026-04-18 12:30:00 UTC",
+      "hoursUntil": 22.0,
+      "estimate": 2.9,
+      "previous": 3.0
+    }
+  ],
+  "tokenCatalysts": {
+    "BTC": [],
+    "ETH": [],
+    "SOL": [
+      {
+        "type": "token_unlock",
+        "description": "0.52% of circulating supply unlocks",
+        "scheduledAt": "2026-04-19 00:00:00 UTC",
+        "hoursUntil": 33.5
+      }
+    ],
+    "FIL": []
+  },
+  "sources": {
+    "macro": "finnhub",
+    "token": "coinmarketcal"
+  },
+  "warnings": []
+}
+```
+
+### Response Fields
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `generatedAt` | string | UTC timestamp when this response was generated — `"yyyy-MM-dd HH:mm:ss UTC"` |
+| `cacheAgeMinutes` | int | Minutes since the upstream API data was last refreshed. `0` = freshly fetched on this request. Maximum 59 before the cache auto-invalidates. |
+| `windowHours` | int | The look-ahead window used to filter events (echoes the request parameter after clamping) |
+| `macroEvents` | array | High-impact US macro events within the window, ordered soonest first. Empty when no events fall in the window or Finnhub is unreachable. |
+| `tokenCatalysts` | object | Map of coin symbol → list of token catalysts. Every requested symbol appears as a key, with an empty array when no events were found. |
+| `sources` | object | Provider attribution — `macro` and `token` fields identify which upstream API supplied each domain |
+| `warnings` | array | Non-fatal issues: upstream API errors or unexpected schema. Empty when everything fetched cleanly. |
+
+#### Macro Event Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Event name, e.g. `"CPI YoY"`, `"FOMC Statement"`, `"Nonfarm Payrolls"` |
+| `country` | string | ISO country code — always `"US"` for the current filter |
+| `impact` | string | Finnhub impact label — always `"high"` for the current filter |
+| `scheduledAt` | string | Event time in UTC — `"yyyy-MM-dd HH:mm:ss UTC"` |
+| `hoursUntil` | double | Hours from response generation time until this event, rounded to 1 decimal |
+| `estimate` | double \| null | Analyst consensus estimate for the metric. `null` when not available. |
+| `previous` | double \| null | Previous release value for the same metric. `null` when not available. |
+
+#### Token Catalyst Object
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `type` | string | CoinMarketCal category slug — snake_case of the first category on the event. Common values: `token_unlock` · `exchange_listing` · `mainnet_launch` · `hard_fork` · `governance_vote` · `partnership` · `other` |
+| `description` | string | Human-readable event description from CoinMarketCal (English) |
+| `scheduledAt` | string | Event time in UTC — `"yyyy-MM-dd HH:mm:ss UTC"`. CoinMarketCal provides date only (no intraday time), so all token events are set to `00:00:00 UTC` on the event date. |
+| `hoursUntil` | double | Hours from response generation time until this event, rounded to 1 decimal |
+
+### Telegram Alerts
+
+This endpoint sends a `DART_SIGNALS` Telegram alert under two conditions:
+
+| Trigger | Alert message |
+|---------|--------------|
+| HTTP or network error calling Finnhub | `⚠️ [CatalystService] Finnhub API call failed: <error> — macro events will be empty until cache refreshes.` |
+| Finnhub response missing `economicCalendar` field | `⚠️ [CatalystService] Finnhub /calendar/economic returned null or missing 'economicCalendar' field — API contract may have changed.` |
+| HTTP or network error calling CoinMarketCal | `⚠️ [CatalystService] CoinMarketCal API call failed: <error> — token catalysts will be empty until cache refreshes.` |
+| CoinMarketCal response missing `body` field | `⚠️ [CatalystService] CoinMarketCal /events returned null or missing 'body' field — API contract may have changed.` |
+| Any unexpected parsing exception | `⚠️ [CatalystService] Unexpected error parsing <provider> response: <error> — possible API contract change.` |
+
+Alerts fire at most once per cache refresh cycle (every 60 minutes), so they do not spam the channel on repeated calls.
+
+### HTTP Status Codes
+
+| Code | Meaning |
+|------|---------|
+| 200 | Always returned — never 404. Check `warnings` for partial results. |
+
+---
+
 ## Supported Coins
 
 ### Order Book (`/orderbook`)
@@ -889,6 +1018,264 @@ curl "http://193.36.85.229:8080/api/analysis/dominance-matrix?symbol=SOL&timefra
 ```bash
 curl "http://193.36.85.229:8080/api/analysis/dominance-matrix?symbol=ETH&timeframe=1h"
 ```
+
+### Check catalysts for BTC, SOL, ETH, FIL in the next 48 hours
+
+```bash
+curl "http://193.36.85.229:8080/api/analysis/catalysts?symbols=BTC,SOL,ETH,FIL&hours=48"
+```
+
+### Check catalysts for all supported coins in the next 24 hours
+
+```bash
+curl "http://193.36.85.229:8080/api/analysis/catalysts?hours=24"
+```
+
+### Check the full 7-day catalyst window for SOL and ETH
+
+```bash
+curl "http://193.36.85.229:8080/api/analysis/catalysts?symbols=SOL,ETH&hours=168"
+```
+
+### List all open journal trades with unrealized PnL
+
+```bash
+curl "http://193.36.85.229:8080/api/analysis/journal?status=OPEN"
+```
+
+### List the 20 most recent closed journal trades (WIN + LOSS combined)
+
+```bash
+curl "http://193.36.85.229:8080/api/analysis/journal?status=ALL&limit=20"
+```
+
+### List the last 10 engine-generated WIN positions for BTC
+
+```bash
+curl "http://193.36.85.229:8080/api/analysis/positions?status=WIN&coin=BTC&limit=10"
+```
+
+### Show all currently open exchange positions
+
+```bash
+curl "http://193.36.85.229:8080/api/analysis/positions?status=OPEN"
+```
+
+---
+
+## 9. Trade Journal
+
+```
+GET /api/analysis/journal
+```
+
+Returns aggregate statistics across the full personal trade journal plus a filtered, paginated list of entries.
+Entries are logged manually via the `/journal` Telegram command and auto-resolved (WIN / LOSS) when TP or SL is hit based on live Bitunix price.
+
+> OPEN entries include a real-time `unrealizedPnl` field computed against the current Bitunix live price.
+> This field is `null` for closed entries or when the live price fetch fails.
+
+### Query Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `status` | string | No | `ALL` | Filter entries by lifecycle status. One of: `ALL` · `OPEN` · `WIN` · `LOSS` |
+| `limit` | int | No | `50` | Maximum number of entries to return (1–500) |
+
+### Example Request
+
+```
+GET /api/analysis/journal?status=OPEN
+```
+
+### Example Response
+
+```json
+{
+  "requestedStatus": "OPEN",
+  "totalOpen": 2,
+  "totalWin": 14,
+  "totalLoss": 6,
+  "winRate": 70.0,
+  "totalRealisedPnl": 312.45,
+  "entries": [
+    {
+      "id": 42,
+      "symbol": "BTC",
+      "direction": "LONG",
+      "entryPrice": 83500.0,
+      "sl": 81000.0,
+      "tp": 91000.0,
+      "rrRatio": 3,
+      "leverage": 30,
+      "riskAmountUsdt": 50.0,
+      "positionNotional": 1670.0,
+      "engagedMargin": 55.67,
+      "feeTier": "VIP0",
+      "openFee": 1.34,
+      "closeFee": null,
+      "status": "OPEN",
+      "openedAt": "2026-04-15 09:30",
+      "closedAt": null,
+      "exitPrice": null,
+      "pnl": null,
+      "unrealizedPnl": 42.18
+    }
+  ]
+}
+```
+
+### Response Fields — Top Level
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `requestedStatus` | string | The status filter that was applied to `entries` |
+| `totalOpen` | int | Total OPEN entries across the full journal (unfiltered) |
+| `totalWin` | int | Total WIN entries across the full journal (unfiltered) |
+| `totalLoss` | int | Total LOSS entries across the full journal (unfiltered) |
+| `winRate` | double | Win rate as a percentage of resolved (WIN+LOSS) trades |
+| `totalRealisedPnl` | double | Sum of net P&L in USDT across all closed trades (full journal) |
+| `entries` | array | Filtered, capped list of journal entries (see below) |
+
+### Response Fields — JournalEntry
+
+| Field | Type | Nullable | Description |
+|-------|------|----------|-------------|
+| `id` | long | No | Database primary key |
+| `symbol` | string | No | Coin base symbol (e.g. `"BTC"`) |
+| `direction` | string | No | `"LONG"` or `"SHORT"` |
+| `entryPrice` | double | No | Entry price in USDT |
+| `sl` | double | No | Stop-loss price |
+| `tp` | double | No | Take-profit price |
+| `rrRatio` | int | No | R/R ratio used (e.g. `3` = 1:3) |
+| `leverage` | int | No | Leverage at open |
+| `riskAmountUsdt` | double | No | Dollar risk on this trade |
+| `positionNotional` | double | No | Full position value in USDT |
+| `engagedMargin` | double | No | Margin locked = notional / leverage |
+| `feeTier` | string | No | Bitunix fee tier (e.g. `"VIP0"`) |
+| `openFee` | double | Yes | Taker fee paid at open in USDT |
+| `closeFee` | double | Yes | Taker fee paid at close. `null` while OPEN |
+| `status` | string | No | `"OPEN"` · `"WIN"` · `"LOSS"` |
+| `openedAt` | string | No | Open timestamp `"yyyy-MM-dd HH:mm"` |
+| `closedAt` | string | Yes | Close timestamp. `null` while OPEN |
+| `exitPrice` | double | Yes | Exit price. `null` while OPEN |
+| `pnl` | double | Yes | Realised net P&L in USDT. `null` while OPEN |
+| `unrealizedPnl` | double | Yes | Live unrealized gross P&L. Populated for OPEN only; `null` otherwise or on price-fetch failure |
+
+### HTTP Status Codes
+
+| Code | Meaning |
+|------|---------|
+| 200 | Success — always returned |
+
+---
+
+## 10. Exchange Positions
+
+```
+GET /api/analysis/positions
+```
+
+Returns aggregate counters and a filtered list of engine-generated exchange positions — the AI signal results placed (or validated but not placed) on Bitunix by the trading engine.
+
+Lifecycle:
+- `OPEN` — position is live on the exchange
+- `WIN` — closed at take-profit
+- `LOSS` — closed at stop-loss
+- `NOTOPEN` — signal was validated but no order was placed (forward-test mode)
+- `TIMEOUT` — candle window expired before TP/SL was hit
+
+> Note: `totalNetPnl` in the response covers only WIN and LOSS positions (real closed trades). NOTOPEN and TIMEOUT records are excluded from the P&L sum.
+
+### Query Parameters
+
+| Parameter | Type | Required | Default | Description |
+|-----------|------|----------|---------|-------------|
+| `status` | string | No | `ALL` | Filter positions. One of: `ALL` · `OPEN` · `WIN` · `LOSS` |
+| `coin` | string | No | — | Optional coin base symbol filter (e.g. `"BTC"`). Omit for all coins. |
+| `limit` | int | No | `50` | Maximum number of positions to return (1–500) |
+
+> `ALL` returns the most recent open positions merged with the most recent WIN/LOSS closed positions, sorted by `openTime` descending.
+
+### Example Request
+
+```
+GET /api/analysis/positions?status=WIN&coin=BTC&limit=10
+```
+
+### Example Response
+
+```json
+{
+  "requestedStatus": "WIN",
+  "totalOpen": 1,
+  "totalWin": 87,
+  "totalLoss": 43,
+  "totalNotOpen": 12,
+  "totalTimeout": 5,
+  "totalNetPnl": 1845.60,
+  "positions": [
+    {
+      "id": 310,
+      "coin": "BTC",
+      "signal": "LONG",
+      "entryPrice": 82000.0,
+      "stopLossPrice": 79500.0,
+      "targetPrice": 89500.0,
+      "stopLossPercent": 3.05,
+      "positionSizeUsdt": 1640.0,
+      "closed": true,
+      "result": "WIN",
+      "openTime": "2026-04-12 14:01",
+      "closeTime": "2026-04-13 06:45",
+      "rawProfit": 149.82,
+      "netProfit": 144.10,
+      "profitPercent": 8.79,
+      "validationProfile": "current-v1-long"
+    }
+  ]
+}
+```
+
+### Response Fields — Top Level
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `requestedStatus` | string | Status filter applied to `positions` |
+| `totalOpen` | int | Total currently OPEN positions (full history, unfiltered) |
+| `totalWin` | int | Total WIN positions (full history, unfiltered) |
+| `totalLoss` | int | Total LOSS positions (full history, unfiltered) |
+| `totalNotOpen` | int | Total NOTOPEN records (forward-test, no real order placed) |
+| `totalTimeout` | int | Total TIMEOUT records (window expired before TP/SL) |
+| `totalNetPnl` | double | Sum of net P&L in USDT across all WIN + LOSS positions (full history) |
+| `positions` | array | Filtered, capped list of positions (see below) |
+
+### Response Fields — ExchangePosition
+
+| Field | Type | Nullable | Description |
+|-------|------|----------|-------------|
+| `id` | long | No | Database primary key |
+| `coin` | string | No | Coin base symbol (e.g. `"BTC"`) |
+| `signal` | string | No | Direction: `"LONG"` or `"SHORT"` |
+| `entryPrice` | double | Yes | Entry price in USDT at order placement |
+| `stopLossPrice` | double | Yes | Stop-loss price |
+| `targetPrice` | double | Yes | Take-profit price |
+| `stopLossPercent` | double | Yes | SL distance as % of entry price |
+| `positionSizeUsdt` | double | Yes | Total position notional in USDT |
+| `closed` | boolean | No | `true` once the position is closed |
+| `result` | string | Yes | `"OPEN"` · `"WIN"` · `"LOSS"` · `"NOTOPEN"` · `"TIMEOUT"`. `null` while open |
+| `openTime` | string | Yes | Open timestamp `"yyyy-MM-dd HH:mm"` |
+| `closeTime` | string | Yes | Close timestamp. `null` while OPEN |
+| `rawProfit` | double | Yes | Gross P&L before fees in USDT. `null` while OPEN |
+| `netProfit` | double | Yes | Net P&L after fees in USDT. `null` while OPEN |
+| `profitPercent` | double | Yes | Net P&L as % of position size. `null` while OPEN |
+| `validationProfile` | string | Yes | Validation profile name that approved the signal (e.g. `"current-v1-long"`). `null` for older records |
+
+### HTTP Status Codes
+
+| Code | Meaning |
+|------|---------|
+| 200 | Success — always returned |
 
 ---
 
