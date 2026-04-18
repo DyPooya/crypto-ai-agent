@@ -92,6 +92,10 @@ C_TIP_BG     = colors.HexColor("#eef6ff")
 C_TIP_BORDER = colors.HexColor("#4a90d9")
 C_CONC_BG    = colors.HexColor("#f0fff4")
 C_CONC_BORDER= colors.HexColor("#27ae60")
+C_WARN_BG    = colors.HexColor("#fff8e1")
+C_WARN_BORDER= colors.HexColor("#f0a500")
+C_POS_BG     = colors.HexColor("#f3f0ff")
+C_POS_BORDER = colors.HexColor("#7c5cbf")
 C_GRAY       = colors.HexColor("#666666")
 C_LIGHT_LINE = colors.HexColor("#dddddd")
 
@@ -137,6 +141,22 @@ def make_styles() -> dict:
         "simple": ParagraphStyle("simple", **base,
             fontSize=9.5, leading=17,
             backColor=C_CONC_BG, borderColor=C_CONC_BORDER,
+            borderWidth=1, borderPadding=(5, 8, 5, 8),
+            spaceAfter=6),
+
+        "market_mood": ParagraphStyle("market_mood", **base,
+            fontSize=9.5, leading=17,
+            backColor=C_WARN_BG, borderColor=C_WARN_BORDER,
+            borderWidth=1, borderPadding=(6, 8, 6, 8),
+            spaceAfter=8),
+
+        "pos_header": ParagraphStyle("pos_header", **base,
+            fontSize=8, leading=14,
+            textColor=C_GRAY, spaceAfter=4),
+
+        "pos_block": ParagraphStyle("pos_block", **base,
+            fontSize=9.5, leading=17,
+            backColor=C_POS_BG, borderColor=C_POS_BORDER,
             borderWidth=1, borderPadding=(5, 8, 5, 8),
             spaceAfter=6),
 
@@ -188,11 +208,54 @@ def build_pdf(data: dict, output_path: str):
     # ── Tip of the day ───────────────────────────────────────────────────────
     story.append(Paragraph(f"💡  Tip of the Day:  {tip_text}", s["tip"]))
 
-    # ── Top coins section ────────────────────────────────────────────────────
-    story.append(Paragraph("Best Trading Opportunities Today", s["section_head"]))
-    story.append(HRFlowable(width="100%", thickness=0.5, color=C_LIGHT_LINE, spaceAfter=4))
+    # ── Market Mood ──────────────────────────────────────────────────────────
+    market_mood = data.get("market_mood", "")
+    if market_mood:
+        story.append(Paragraph("Market Mood", s["section_head"]))
+        story.append(Paragraph(market_mood, s["market_mood"]))
 
+    # ── BTC Watch ────────────────────────────────────────────────────────────
+    btc_watch = data.get("btc_watch")
+    if btc_watch:
+        story.append(Paragraph("BTC Watch", s["section_head"]))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=C_LIGHT_LINE, spaceAfter=4))
+
+        btc_block = []
+        btc_price = btc_watch.get("current_price", "")
+        btc_tech = btc_watch.get("technical_summary", "")
+        btc_mode = btc_watch.get("mode", "watch")
+
+        if btc_price:
+            btc_block.append(Paragraph(f"BTC Current Price: ${btc_price}", s["coin_head"]))
+        if btc_tech:
+            btc_block.append(Paragraph(btc_tech, s["body"]))
+
+        if btc_mode == "qualified":
+            sa = btc_watch.get("scenario_a", {})
+            sb = btc_watch.get("scenario_b", {})
+            btc_block.append(Paragraph("📌  Primary Scenario:", s["scenario_label"]))
+            btc_block.append(Paragraph(
+                f"Trigger: ${sa.get('trigger','—')}   |   Stop-Loss: ${sa.get('sl','—')}   |   Take-Profit: ${sa.get('tp','—')}   |   R/R: 1:{sa.get('rr','—')}",
+                s["scenario_data"]
+            ))
+            btc_block.append(Paragraph("📌  Counter Scenario:", s["scenario_label"]))
+            btc_block.append(Paragraph(
+                f"Trigger: ${sb.get('trigger','—')}   |   Stop-Loss: ${sb.get('sl','—')}   |   Take-Profit: ${sb.get('tp','—')}   |   R/R: 1:{sb.get('rr','—')}",
+                s["scenario_data"]
+            ))
+
+        btc_simple = btc_watch.get("simple_conclusion", "")
+        if btc_simple:
+            btc_block.append(Paragraph(f"✅  For Beginners:  {btc_simple}", s["simple"]))
+
+        story.append(KeepTogether(btc_block))
+
+    # ── Top coins section ────────────────────────────────────────────────────
     coins = data.get("coins", [])
+    if coins:
+        story.append(Paragraph("Best Trading Opportunities Today", s["section_head"]))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=C_LIGHT_LINE, spaceAfter=4))
+
     for i, coin in enumerate(coins, 1):
         symbol     = coin.get("symbol", "")
         direction  = coin.get("direction", "LONG")
@@ -237,6 +300,34 @@ def build_pdf(data: dict, output_path: str):
         if i < len(coins):
             story.append(HRFlowable(width="60%", thickness=0.4, color=C_LIGHT_LINE,
                                     spaceBefore=2, spaceAfter=2))
+
+    # ── Open Positions Guidance ──────────────────────────────────────────────
+    open_positions = data.get("open_positions_guidance", [])
+    if open_positions:
+        story.append(Spacer(1, 4*mm))
+        story.append(Paragraph("Host's Current Exposure — Guidance for Followers", s["section_head"]))
+        story.append(HRFlowable(width="100%", thickness=0.5, color=C_LIGHT_LINE, spaceAfter=4))
+        story.append(Paragraph(
+            "<i>These are positions the channel host is currently holding from previous analysis. "
+            "If you entered a similar position after seeing a previous PDF, below is general guidance "
+            "on what to do now. This is NOT financial advice — you are responsible for your own trades. "
+            "Nothing about position size, leverage, or exact profit/loss is shown.</i>",
+            s["pos_header"]
+        ))
+
+        for pos in open_positions:
+            sym = pos.get("symbol", "")
+            d = pos.get("direction", "")
+            entry = pos.get("entry_price", "")
+            status = pos.get("current_status", "")
+            guidance = pos.get("guidance", "")
+
+            pos_text = (
+                f"<b>{sym} {direction_label(d)}</b>  —  Entry: ${entry}<br/>"
+                f"Status: {status}<br/>"
+                f"{guidance}"
+            )
+            story.append(Paragraph(pos_text, s["pos_block"]))
 
     # ── Daily conclusion ─────────────────────────────────────────────────────
     daily = data.get("daily_conclusion", "")

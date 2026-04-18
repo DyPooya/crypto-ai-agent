@@ -78,6 +78,7 @@ GET /api/analysis/backtest/top?timeframe=15min&candleLimit=400
 - Cross-reference all three result sets. A coin+direction+RR combination that appears in the top 10 across **multiple windows** is higher conviction than one that only appears in a single window.
 - Prioritise setups where **expectancy is positive** (`winRate × RR > 1.0`) and `finalCapital` shows meaningful profit in at least two of the three windows.
 - Select the **top 3–5 strongest setups** to carry forward. Record for each: symbol, direction, best RR ratio, win rates across windows, and the consistency score (how many of the 3 windows it ranked in).
+- **BTC is always included.** If BTC does not appear in the top 3–5, still carry it forward as an additional setup through Phases 2–6 and include it in the final output (both the MD report and the PDF). BTC is always relevant to the trader regardless of its backtest ranking. When BTC is added this way, it appears as a separate dedicated section after the ranked setups and is clearly labelled as not meeting the top-setup quality bar (if applicable).
 
 #### Supported Timeframes Reference
 
