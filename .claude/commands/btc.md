@@ -1,0 +1,1 @@
+Run the BTC-only analysis pipeline as defined in @crypto-agent-btc-prompt.md — execute all phases in order for Bitcoin only, without asking questions. Save the report to reports/btc/YYYY-MM-DD_HH-MM.md with the machine-readable JSON footer.
