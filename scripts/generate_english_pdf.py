@@ -178,6 +178,8 @@ html,body{
 
 .summary{font-size:12px;line-height:1.55;color:var(--ink-200);margin-bottom:16px;}
 
+.market-mood{font-size:14px;font-weight:600;line-height:1.55;color:var(--ink-200);margin-bottom:20px;}
+
 .scenario-pair{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;}
 .scenario-pair.one{grid-template-columns:1fr;}
 .sc-box{background:var(--ink-850);border:1px solid var(--ink-700);border-radius:3px;padding:12px;font-family:var(--mono);font-size:11px;}
@@ -431,12 +433,6 @@ def build_html(data: dict) -> str:
     daily = data.get("daily_conclusion", "")
     market_mood = data.get("market_mood", "")
 
-    # Split mood into lead sentence and rest
-    import re
-    mood_sentences = re.split(r'(?<=[.!?])\s+', market_mood)
-    mood_lead = mood_sentences[0] if mood_sentences else "Daily market brief."
-    mood_rest = " ".join(mood_sentences[1:]) if len(mood_sentences) > 1 else ""
-
     # Calculate total pages: page 1 (BTC) + N coin pages + 1 final page (positions + conclusion)
     COINS_PER_PAGE = 2
     coin_pages_count = max(1, (len(coins) + COINS_PER_PAGE - 1) // COINS_PER_PAGE) if coins else 1
@@ -446,9 +442,7 @@ def build_html(data: dict) -> str:
     page1 = f"""
   <section class="page">
     {header_html(date_str)}
-    <div class="kicker">Market mood</div>
-    <h1 class="title">{esc(mood_lead)}</h1>
-    {"<p class='deck'>" + esc(mood_rest) + "</p>" if mood_rest else ""}
+    <p class="market-mood">{esc(market_mood)}</p>
     <div class="tip">
       <span class="ico">💡</span>
       <span>{esc(tip_text)}</span>
