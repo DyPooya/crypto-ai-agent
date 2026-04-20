@@ -437,7 +437,10 @@ def build_html(data: dict) -> str:
     mood_lead = mood_sentences[0] if mood_sentences else "Daily market brief."
     mood_rest = " ".join(mood_sentences[1:]) if len(mood_sentences) > 1 else ""
 
-    total_pages = 3
+    # Calculate total pages: page 1 (BTC) + N coin pages + 1 final page (positions + conclusion)
+    COINS_PER_PAGE = 2
+    coin_pages_count = max(1, (len(coins) + COINS_PER_PAGE - 1) // COINS_PER_PAGE) if coins else 1
+    total_pages = 1 + coin_pages_count + 1
 
     # ── Page 1 — Cover + BTC Watch
     page1 = f"""
@@ -459,15 +462,28 @@ def build_html(data: dict) -> str:
     {footer_html(1, total_pages)}
   </section>"""
 
-    # ── Page 2 — Top Coin Scenarios
-    coins_html = ""
+    # ── Coin Pages — dynamically generated
+    coin_pages = ""
     if coins:
-        for i, coin in enumerate(coins, 1):
-            coins_html += coin_block_html(coin, i)
+        for page_idx in range(coin_pages_count):
+            start_idx = page_idx * COINS_PER_PAGE
+            end_idx = start_idx + COINS_PER_PAGE
+            page_coins = coins[start_idx:end_idx]
+            coins_html = "".join(coin_block_html(coin, start_idx + i + 1) for i, coin in enumerate(page_coins))
+            page_num = 2 + page_idx
+            coin_pages += f"""
+  <section class="page">
+    {header_html(date_str)}
+    <div class="section-head">
+      <span class="section-num">&sect; 02</span>
+      <span class="section-title">Top coin scenarios</span>
+    </div>
+    {coins_html}
+    {footer_html(page_num, total_pages)}
+  </section>"""
     else:
         coins_html = '<div class="empty-state">No non-BTC setups qualified today. Our agent screens the top liquid alts each morning; when none meet the confidence threshold, we pass rather than force a trade.</div>'
-
-    page2 = f"""
+        coin_pages = f"""
   <section class="page">
     {header_html(date_str)}
     <div class="section-head">
@@ -478,7 +494,7 @@ def build_html(data: dict) -> str:
     {footer_html(2, total_pages)}
   </section>"""
 
-    # ── Page 3 — Open Positions + Conclusion
+    # ── Final Page — Open Positions + Conclusion
     pos_html = ""
     if open_positions:
         for p in open_positions:
@@ -486,7 +502,8 @@ def build_html(data: dict) -> str:
     else:
         pos_html = '<div class="empty-state">No open positions require guidance today. All tracked positions are holding inside their original plans — no stop-loss, take-profit, or exit adjustments recommended.</div>'
 
-    page3 = f"""
+    final_page_num = total_pages
+    final_page = f"""
   <section class="page">
     {header_html(date_str)}
     <div class="section-head">
@@ -508,7 +525,7 @@ def build_html(data: dict) -> str:
       This report is for informational purposes only and does not constitute financial advice.
       The trader is solely responsible for their own trading decisions. &copy; Dart Team
     </div>
-    {footer_html(3, total_pages)}
+    {footer_html(final_page_num, total_pages)}
   </section>"""
 
     return f"""<!DOCTYPE html>
@@ -520,8 +537,8 @@ def build_html(data: dict) -> str:
 </head>
 <body>
 {page1}
-{page2}
-{page3}
+{coin_pages}
+{final_page}
 </body>
 </html>"""
 
