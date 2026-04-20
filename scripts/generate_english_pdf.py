@@ -535,7 +535,9 @@ def build_pdf(data: dict, output_path: str):
 
     try:
         chrome_cmd = None
-        for candidate in ["google-chrome", "chromium", "chromium-browser"]:
+        for candidate in ["google-chrome", "chromium", "chromium-browser",
+                          "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+                          "/Applications/Chromium.app/Contents/MacOS/Chromium"]:
             try:
                 subprocess.run([candidate, "--version"], capture_output=True, check=True)
                 chrome_cmd = candidate
